@@ -38,16 +38,21 @@ class DashboardController extends Controller
         ->where('year', $currentYear)
         ->sum('amount');
 
+        // Dynamic metrics
+        $remainingBudgetPool = $totalBudgeted - $totalExpenses;
         $netSavings = $totalIncome - $totalExpenses;
 
-        // 3. Active Budgets with Expenses Sum
+        // 3. Active Budgets with Month-Constrained Expenses Sum
         $budgets = Budget::whereHas('category', function ($q) use ($householdId) {
             $q->where('household_id', $householdId);
         })
         ->where('month', $currentMonth)
         ->where('year', $currentYear)
         ->with('category')
-        ->withSum('expenses', 'amount')
+        ->withSum(['expenses' => function ($query) use ($currentMonth, $currentYear) {
+            $query->whereMonth('spent_at', $currentMonth)
+                  ->whereYear('spent_at', $currentYear);
+        }], 'amount')
         ->get();
 
         // 4. Recent Expenses with Eager-Loaded Relations
@@ -68,6 +73,7 @@ class DashboardController extends Controller
             'totalIncome',
             'totalExpenses',
             'totalBudgeted',
+            'remainingBudgetPool',
             'netSavings',
             'budgets',
             'recentExpenses'

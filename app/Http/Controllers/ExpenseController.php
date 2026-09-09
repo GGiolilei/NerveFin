@@ -2,20 +2,22 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Expense;
 use App\Models\Budget;
-use App\Models\PaymentMethod;
-use App\Models\FinancialAccount;
-use Illuminate\Http\Request;
 use App\Models\Category;
+use App\Models\Expense;
+use App\Models\FinancialAccount;
+use App\Models\PaymentMethod;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ExpenseController extends Controller
 {
     public function index(Request $request)
     {
         $householdId = $request->user()->memberships()->firstOrFail()->household_id;
+        
         $expenses = Expense::where('household_id', $householdId)
-            ->with(['category', 'budget', 'user', 'paymentMethod'])
+            ->with(['category', 'budget', 'user', 'paymentMethod', 'account'])
             ->latest('spent_at')
             ->get();
 
@@ -23,28 +25,39 @@ class ExpenseController extends Controller
     }
 
     public function create(Request $request)
-{
-    $householdId = $request->user()->memberships()->firstOrFail()->household_id;
-    
-    // Fetch categories for the household
-    $categories = Category::where('household_id', $householdId)->get();
+    {
+        $householdId = $request->user()->memberships()->firstOrFail()->household_id;
 
-    // Fetch active budgets for current month/year
-    $budgets = Budget::whereHas('category', function ($q) use ($householdId) {
-        $q->where('household_id', $householdId);
-    })
-    ->where('month', now()->month)
-    ->where('year', now()->year)
-    ->with('category')
-    ->get();
+        // Fetch categories for the household
+        $categories = Category::where('household_id', $householdId)->get();
 
-    $paymentMethods = PaymentMethod::where('household_id', $householdId)->get();
-    $accounts = FinancialAccount::where('household_id', $householdId)->get();
+        // Fetch budgets matching current month/year, or fallback to all household budgets
+        $budgets = Budget::whereHas('category', function ($q) use ($householdId) {
+            $q->where('household_id', $householdId);
+        })
+        ->where(function ($query) {
+            $query->where(function ($q) {
+                $q->where('month', now()->month)
+                  ->where('year', now()->year);
+            })->orWhereNull('month'); // Fallback if budgets don't use strict monthly constraints
+        })
+        ->with('category')
+        ->get();
 
-    return view('expense.create', compact('categories', 'budgets', 'paymentMethods', 'accounts'));
-}
+        // If strict month filter returns empty, grab all available budgets for household
+        if ($budgets->isEmpty()) {
+            $budgets = Budget::whereHas('category', function ($q) use ($householdId) {
+                $q->where('household_id', $householdId);
+            })->with('category')->get();
+        }
 
-   public function store(Request $request)
+        $paymentMethods = PaymentMethod::where('household_id', $householdId)->get();
+        $accounts = FinancialAccount::where('household_id', $householdId)->get();
+
+        return view('expense.create', compact('categories', 'budgets', 'paymentMethods', 'accounts'));
+    }
+
+    public function store(Request $request)
     {
         $householdId = $request->user()->memberships()->firstOrFail()->household_id;
 
@@ -53,31 +66,52 @@ class ExpenseController extends Controller
             'amount' => 'required|numeric|min:1',
             'budget_id' => 'required|exists:budgets,id',
             'payment_method_id' => 'required|exists:payment_methods,id',
+            'financial_account_id' => 'nullable|exists:financial_accounts,id',
             'spent_at' => 'required|date',
             'description' => 'nullable|string',
         ]);
 
-        // Fetch the budget to extract its associated category_id
-        $budget = Budget::findOrFail($validated['budget_id']);
+        return DB::transaction(function () use ($validated, $householdId, $request) {
+            // Fetch budget to resolve category
+            $budget = Budget::findOrFail($validated['budget_id']);
 
-        Expense::create([
-            'household_id' => $householdId,
-            'user_id' => $request->user()->id,
-            'budget_id' => $budget->id,
-            'category_id' => $budget->category_id, // Automatically resolved
-            'payment_method_id' => $validated['payment_method_id'],
-            'name' => $validated['name'],
-            'amount' => $validated['amount'],
-            'spent_at' => $validated['spent_at'],
-            'description' => $validated['description'] ?? null,
-        ]);
+            // Create Expense Record
+            $expense = Expense::create([
+                'household_id' => $householdId,
+                'user_id' => $request->user()->id,
+                'budget_id' => $budget->id,
+                'category_id' => $budget->category_id,
+                'payment_method_id' => $validated['payment_method_id'],
+                'financial_account_id' => $validated['financial_account_id'] ?? null,
+                'name' => $validated['name'],
+                'amount' => $validated['amount'],
+                'spent_at' => $validated['spent_at'],
+                'description' => $validated['description'] ?? null,
+            ]);
 
-        return redirect()->route('expenses.index')->with('success', 'Expense logged against budget!');
+            // Deduct balance from Financial Account if selected
+            if (!empty($validated['financial_account_id'])) {
+                $account = FinancialAccount::where('household_id', $householdId)
+                    ->findOrFail($validated['financial_account_id']);
+                
+                $account->decrement('balance', $validated['amount']);
+            }
+
+            return redirect()->route('expenses.index')->with('success', 'Expense logged successfully!');
+        });
     }
 
     public function destroy(Expense $expense)
     {
-        $expense->delete();
-        return redirect()->route('expenses.index')->with('success', 'Expense removed!');
+        DB::transaction(function () use ($expense) {
+            // Restore account balance if deleted
+            if ($expense->financial_account_id && $expense->account) {
+                $expense->account->increment('balance', $expense->amount);
+            }
+
+            $expense->delete();
+        });
+
+        return redirect()->route('expenses.index')->with('success', 'Expense removed and balance restored!');
     }
 }

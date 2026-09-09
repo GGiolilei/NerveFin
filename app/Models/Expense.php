@@ -61,4 +61,8 @@ class Expense extends Model
     {
         return 'Rp ' . number_format($this->amount, 0, ',', '.');
     }
+    public function account(): BelongsTo
+    {
+        return $this->belongsTo(FinancialAccount::class, 'financial_account_id');
+    }
 }
