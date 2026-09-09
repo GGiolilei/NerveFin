@@ -18,25 +18,17 @@
 
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700">Category</label>
-                        <select name="category_id" required class="mt-1 block w-full rounded-md border-gray-300">
-                            @foreach($categories as $category)
-                                <option value="{{ $category->id }}">{{ $category->name }}</option>
+                        <label class="block text-sm font-medium text-gray-700">Target Budget Pool</label>
+                        <select name="budget_id" required class="mt-1 block w-full rounded-md border-gray-300">
+                            <option value="">-- Select Budget --</option>
+                            @foreach($budgets as $budget)
+                                <option value="{{ $budget->id }}">
+                                    {{ $budget->category?->name ?? 'Uncategorized' }} (Limit: Rp {{ number_format($budget->amount, 0, ',', '.') }})
+                                </option>
                             @endforeach
                         </select>
                     </div>
 
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Financial Account</label>
-                        <select name="financial_account_id" required class="mt-1 block w-full rounded-md border-gray-300">
-                            @foreach($accounts as $account)
-                                <option value="{{ $account->id }}">{{ $account->name }} ({{ $account->formatted_balance }})</option>
-                            @endforeach
-                        </select>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Payment Method</label>
                         <select name="payment_method_id" required class="mt-1 block w-full rounded-md border-gray-300">
@@ -45,11 +37,11 @@
                             @endforeach
                         </select>
                     </div>
+                </div>
 
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700">Date Spent</label>
-                        <input type="datetime-local" name="spent_at" value="{{ now()->format('Y-m-d\TH:i') }}" class="mt-1 block w-full rounded-md border-gray-300" />
-                    </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Date Spent</label>
+                    <input type="datetime-local" name="spent_at" value="{{ now()->format('Y-m-d\TH:i') }}" class="mt-1 block w-full rounded-md border-gray-300" />
                 </div>
 
                 <div>
